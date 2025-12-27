@@ -5,6 +5,7 @@ import { ShaderProgram } from "./core/ShaderProgram.js";
 import { Mesh } from "./core/Mesh.js";
 import { PrimitiveFactory } from "./geometry/PrimitiveFactory.js";
 import { Camera } from "./scene/Camera.js";
+import { loadTexture } from "./core/TextureLoader.js";
 
 async function loadText(url) {
   const res = await fetch(url);
@@ -52,6 +53,13 @@ camera = new Camera(60, canvas.width / canvas.height, 0.1, 100);
 const cubeData = PrimitiveFactory.createCube();
 const cube = new Mesh(gl, cubeData);
 
+// ---- texture (Step 7) ----
+const albedoTex = await loadTexture(
+  gl,
+  "./assets/textures/pink-textured-background.jpg"
+);
+
+
 // ---- transforms ----
 const modelMatrix = mat4.create();
 let angle = 0;
@@ -76,9 +84,9 @@ function renderLoop() {
   // Camera
   gl.uniform3fv(program.getUniformLocation("uCameraPos"), camera.position);
 
-  // Material (simple white-ish)
+  // Material
   gl.uniform3fv(program.getUniformLocation("uKa"), new Float32Array([0.08, 0.08, 0.08]));
-  gl.uniform3fv(program.getUniformLocation("uKd"), new Float32Array([0.90, 0.90, 0.90]));
+  gl.uniform3fv(program.getUniformLocation("uKd"), new Float32Array([1.0, 1.0, 1.0])); // fallback if texture off
   gl.uniform3fv(program.getUniformLocation("uKs"), new Float32Array([0.60, 0.60, 0.60]));
   gl.uniform1f(program.getUniformLocation("uShininess"), 64.0);
   gl.uniform1i(program.getUniformLocation("uUseBlinnPhong"), 1);
@@ -95,6 +103,11 @@ function renderLoop() {
   gl.uniform1f(program.getUniformLocation("uPointLight.constant"), 1.0);
   gl.uniform1f(program.getUniformLocation("uPointLight.linear"), 0.22);
   gl.uniform1f(program.getUniformLocation("uPointLight.quadratic"), 0.20);
+
+  // Texture uniforms (Step 7)
+  albedoTex.bind(0);
+  gl.uniform1i(program.getUniformLocation("uAlbedoMap"), 0);
+  gl.uniform1i(program.getUniformLocation("uUseTexture"), 1);
 
   cube.draw();
 

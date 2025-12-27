@@ -8,7 +8,7 @@ in vec2 vUV;
 out vec4 outColor;
 
 struct DirectionalLight {
-  vec3 direction; // points FROM light TO scene? we'll treat as direction to light (-dir)
+  vec3 direction;
   vec3 color;
   float intensity;
 };
@@ -27,24 +27,34 @@ uniform vec3 uCameraPos;
 uniform DirectionalLight uDirLight;
 uniform PointLight uPointLight;
 
-uniform vec3 uKa;        // ambient reflectance
-uniform vec3 uKd;        // diffuse reflectance
-uniform vec3 uKs;        // specular reflectance
+uniform vec3 uKa;
+uniform vec3 uKd;
+uniform vec3 uKs;
 uniform float uShininess;
 
 uniform bool uUseBlinnPhong;
+
+// Step 7: texture
+uniform sampler2D uAlbedoMap;
+uniform bool uUseTexture;
 
 void main() {
   vec3 N = normalize(vWorldNormal);
   vec3 V = normalize(uCameraPos - vWorldPos);
 
-  // ---- Ambient ----
-  vec3 ambient = uKa;
+  // BaseColor: from texture or fallback Kd
+  vec3 baseColor = uKd;
+  if (uUseTexture) {
+    baseColor = texture(uAlbedoMap, vUV).rgb;
+  }
 
-  // ---- Directional ----
+  // Ambient
+  vec3 ambient = uKa * baseColor;
+
+  // Directional
   vec3 Ld = normalize(-uDirLight.direction);
   float ndotl_d = max(dot(N, Ld), 0.0);
-  vec3 diffuse_d = uKd * ndotl_d * uDirLight.color * uDirLight.intensity;
+  vec3 diffuse_d = baseColor * ndotl_d * uDirLight.color * uDirLight.intensity;
 
   vec3 spec_d = vec3(0.0);
   if (ndotl_d > 0.0) {
@@ -59,7 +69,7 @@ void main() {
     }
   }
 
-  // ---- Point ----
+  // Point
   vec3 LpVec = uPointLight.position - vWorldPos;
   float dist = length(LpVec);
   vec3 Lp = normalize(LpVec);
@@ -69,7 +79,7 @@ void main() {
                              uPointLight.quadratic * dist * dist);
 
   float ndotl_p = max(dot(N, Lp), 0.0);
-  vec3 diffuse_p = uKd * ndotl_p * uPointLight.color * uPointLight.intensity;
+  vec3 diffuse_p = baseColor * ndotl_p * uPointLight.color * uPointLight.intensity;
 
   vec3 spec_p = vec3(0.0);
   if (ndotl_p > 0.0) {
@@ -84,6 +94,9 @@ void main() {
     }
   }
 
-  vec3 color = ambient + (diffuse_d + spec_d) + attenuation * (diffuse_p + spec_p);
+  vec3 color = ambient
+             + (diffuse_d + spec_d)
+             + attenuation * (diffuse_p + spec_p);
+
   outColor = vec4(color, 1.0);
 }
