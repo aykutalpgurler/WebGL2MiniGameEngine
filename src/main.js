@@ -3,10 +3,10 @@ import { Renderer } from "./core/Renderer.js";
 import { Time } from "./core/Time.js";
 import { ShaderProgram } from "./core/ShaderProgram.js";
 import { Mesh } from "./core/Mesh.js";
+import { PrimitiveFactory } from "./geometry/PrimitiveFactory.js";
 
 async function loadText(url) {
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`Failed to load: ${url}`);
   return await res.text();
 }
 
@@ -18,53 +18,36 @@ const time = new Time();
 
 function resizeCanvas() {
   const dpr = window.devicePixelRatio || 1;
+  const w = window.innerWidth;
+  const h = window.innerHeight;
 
-  const displayWidth  = window.innerWidth;
-  const displayHeight = window.innerHeight;
-
-  // CSS size
-  canvas.style.width  = displayWidth + "px";
-  canvas.style.height = displayHeight + "px";
-
-  // actual framebuffer size
-  canvas.width  = Math.floor(displayWidth * dpr);
-  canvas.height = Math.floor(displayHeight * dpr);
+  canvas.style.width = w + "px";
+  canvas.style.height = h + "px";
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
 
   renderer.resize(canvas.width, canvas.height);
 }
-
 window.addEventListener("resize", resizeCanvas);
 resizeCanvas();
 
-// ---- load shaders ----
-const vsSource = await loadText("./src/shaders/unlit.vert.glsl");
-const fsSource = await loadText("./src/shaders/unlit.frag.glsl");
-const unlitProgram = new ShaderProgram(gl, vsSource, fsSource);
+// shaders
+const vs = await loadText("./src/shaders/unlit.vert.glsl");
+const fs = await loadText("./src/shaders/unlit.frag.glsl");
+const program = new ShaderProgram(gl, vs, fs);
 
-// ---- create a triangle mesh ----
-const tri = new Mesh(gl, {
-  positions: [
-     0.0,  0.6, 0.0,
-    -0.6, -0.6, 0.0,
-     0.6, -0.6, 0.0
-  ],
-  colors: [
-    1.0, 0.0, 0.0,
-    0.0, 1.0, 0.0,
-    0.0, 0.0, 1.0
-  ]
-});
+// cube
+const cubeData = PrimitiveFactory.createCube();
+const cube = new Mesh(gl, cubeData);
 
 function renderLoop() {
   time.update();
 
   renderer.beginFrame();
-
-  unlitProgram.use();
-  tri.draw();
-
+  program.use();
+  cube.draw();
   renderer.endFrame();
+
   requestAnimationFrame(renderLoop);
 }
-
 requestAnimationFrame(renderLoop);
