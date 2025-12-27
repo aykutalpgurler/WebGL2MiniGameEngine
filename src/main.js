@@ -6,6 +6,7 @@ import { Mesh } from "./core/Mesh.js";
 import { PrimitiveFactory } from "./geometry/PrimitiveFactory.js";
 import { Camera } from "./scene/Camera.js";
 import { loadTexture } from "./core/TextureLoader.js";
+import { loadOBJ } from "./loaders/OBJLoader.js";
 
 async function loadText(url) {
   const res = await fetch(url);
@@ -18,7 +19,6 @@ const gl = createGLContext(canvas);
 
 const renderer = new Renderer(gl);
 const time = new Time();
-
 const mat4 = window.mat4;
 
 let camera;
@@ -34,7 +34,6 @@ function resizeCanvas() {
   canvas.height = Math.floor(h * dpr);
 
   renderer.resize(canvas.width, canvas.height);
-
   if (camera) camera.resize(canvas.width / canvas.height);
 }
 
@@ -49,16 +48,23 @@ const program = new ShaderProgram(gl, vsSource, fsSource);
 // ---- camera ----
 camera = new Camera(60, canvas.width / canvas.height, 0.1, 100);
 
-// ---- mesh (cube with normals/uvs) ----
-const cubeData = PrimitiveFactory.createCube();
-const cube = new Mesh(gl, cubeData);
+// ---- texture ----
+const albedoTex = await loadTexture(gl, "./assets/textures/pink-textured-background.jpg");
 
-// ---- texture (Step 7) ----
-const albedoTex = await loadTexture(
-  gl,
-  "./assets/textures/pink-textured-background.jpg"
-);
+// ---- mesh: try OBJ, fallback to cube ----
+let renderMesh;
 
+try {
+  // put your obj here:
+  // assets/models/model.obj
+  const objData = await loadOBJ("./assets/models/FinalBaseMesh.obj");
+  renderMesh = new Mesh(gl, { ...objData, colors: null }); // colors optional
+  console.log("OBJ loaded:", objData.positions.length / 3, "verts,", objData.indices.length / 3, "tris");
+} catch (e) {
+  console.warn("OBJ load failed, fallback to cube:", e.message);
+  const cubeData = PrimitiveFactory.createCube();
+  renderMesh = new Mesh(gl, cubeData);
+}
 
 // ---- transforms ----
 const modelMatrix = mat4.create();
@@ -66,12 +72,13 @@ let angle = 0;
 
 function renderLoop() {
   time.update();
-  angle += time.deltaTime * 0.8;
+  angle += time.deltaTime * 0.6;
 
   renderer.beginFrame();
 
-  // model: rotate around Y
   mat4.identity(modelMatrix);
+  mat4.scale(modelMatrix, modelMatrix, [0.07, 0.07, 0.07]);
+
   mat4.rotateY(modelMatrix, modelMatrix, angle);
 
   program.use();
@@ -86,7 +93,7 @@ function renderLoop() {
 
   // Material
   gl.uniform3fv(program.getUniformLocation("uKa"), new Float32Array([0.08, 0.08, 0.08]));
-  gl.uniform3fv(program.getUniformLocation("uKd"), new Float32Array([1.0, 1.0, 1.0])); // fallback if texture off
+  gl.uniform3fv(program.getUniformLocation("uKd"), new Float32Array([1.0, 1.0, 1.0]));
   gl.uniform3fv(program.getUniformLocation("uKs"), new Float32Array([0.60, 0.60, 0.60]));
   gl.uniform1f(program.getUniformLocation("uShininess"), 64.0);
   gl.uniform1i(program.getUniformLocation("uUseBlinnPhong"), 1);
@@ -104,12 +111,12 @@ function renderLoop() {
   gl.uniform1f(program.getUniformLocation("uPointLight.linear"), 0.22);
   gl.uniform1f(program.getUniformLocation("uPointLight.quadratic"), 0.20);
 
-  // Texture uniforms (Step 7)
+  // Texture
   albedoTex.bind(0);
   gl.uniform1i(program.getUniformLocation("uAlbedoMap"), 0);
   gl.uniform1i(program.getUniformLocation("uUseTexture"), 1);
 
-  cube.draw();
+  renderMesh.draw();
 
   renderer.endFrame();
   requestAnimationFrame(renderLoop);
