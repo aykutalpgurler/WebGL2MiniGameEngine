@@ -245,7 +245,7 @@ function renderLoop() {
   angle += time.deltaTime * 0.6;
 
   // Keep orbit target synced to object position
-  syncOrbitTargetFromState();
+  // syncOrbitTargetFromState();
 
   // Build model matrix from GUI transform
   mat4.identity(modelMatrix);
