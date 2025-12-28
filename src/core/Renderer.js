@@ -16,4 +16,12 @@ export class Renderer {
   endFrame() {
     // şimdilik boş
   }
+
+  // add inside Renderer class
+setViewportScissor(x, y, w, h) {
+  const gl = this.gl;
+  gl.viewport(x, y, w, h);
+  gl.scissor(x, y, w, h);
+}
+
 }

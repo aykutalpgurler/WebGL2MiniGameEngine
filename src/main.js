@@ -9,6 +9,7 @@ import { Camera } from "./scene/Camera.js";
 import { loadTexture } from "./core/TextureLoader.js";
 import { loadOBJ } from "./loaders/OBJLoader.js";
 import { FirstPersonController } from "./scene/controllers/FirstPersonController.js";
+import { ThirdPersonController } from "./scene/controllers/ThirdPersonController.js";
 import { GUIController } from "./ui/GUI.js";
 
 async function loadText(url) {
@@ -24,7 +25,31 @@ const renderer = new Renderer(gl);
 const time = new Time();
 const mat4 = window.mat4;
 
-let camera;
+// --- Two cameras for bonus dual viewport ---
+const engineCamera = new Camera(60, 1, 0.1, 100);
+const gameCamera = new Camera(60, 1, 0.1, 100);
+
+function setupInitialCameras() {
+  // Engine view (free roam)
+  engineCamera.position[0] = 0;
+  engineCamera.position[1] = 1.2;
+  engineCamera.position[2] = 3.0;
+  engineCamera.target[0] = 0;
+  engineCamera.target[1] = 1.0;
+  engineCamera.target[2] = 0;
+  engineCamera.updateView();
+
+  // Game view (orbit around target)
+  gameCamera.position[0] = 2.5;
+  gameCamera.position[1] = 2.0;
+  gameCamera.position[2] = 4.0;
+  gameCamera.target[0] = 0;
+  gameCamera.target[1] = 1.0;
+  gameCamera.target[2] = 0;
+  gameCamera.updateView();
+}
+
+setupInitialCameras();
 
 function resizeCanvas() {
   const dpr = window.devicePixelRatio || 1;
@@ -38,19 +63,19 @@ function resizeCanvas() {
 
   renderer.resize(canvas.width, canvas.height);
 
-  if (camera) camera.resize(canvas.width / canvas.height);
+  // Each viewport is half width
+  const aspectHalf = (canvas.width * 0.5) / canvas.height;
+  engineCamera.resize(aspectHalf);
+  gameCamera.resize(aspectHalf);
 }
 
 window.addEventListener("resize", resizeCanvas);
 resizeCanvas();
 
-// ---- shaders (Phong) ----
+// ---- shaders ----
 const vsSource = await loadText("./src/shaders/phong.vert.glsl");
 const fsSource = await loadText("./src/shaders/phong.frag.glsl");
 const program = new ShaderProgram(gl, vsSource, fsSource);
-
-// ---- camera ----
-camera = new Camera(60, canvas.width / canvas.height, 0.1, 100);
 
 // ---- texture ----
 const albedoTex = await loadTexture(gl, "./assets/textures/pink-textured-background.jpg");
@@ -120,21 +145,15 @@ gui.init({
   onSelectMeshType: (v) => {
     activeMesh = pickMesh(v);
 
-    // reasonable defaults per mesh type
+    // defaults per mesh
     if (v !== "OBJ") {
       state.transform.scale.x = 1;
       state.transform.scale.y = 1;
       state.transform.scale.z = 1;
-      state.transform.position.x = 0;
-      state.transform.position.y = 0;
-      state.transform.position.z = 0;
     } else {
       state.transform.scale.x = 0.07;
       state.transform.scale.y = 0.07;
       state.transform.scale.z = 0.07;
-      state.transform.position.x = 0;
-      state.transform.position.y = 0;
-      state.transform.position.z = 0;
     }
   },
   onToggleTexture: (v) => {
@@ -142,21 +161,91 @@ gui.init({
   }
 });
 
-// ---- First-person controller ----
-const controller = new FirstPersonController(camera, canvas);
-controller.attach();
+// ---- Controllers ----
+// Engine view: first-person free roam
+const fpController = new FirstPersonController(engineCamera, canvas);
+fpController.attach();
+
+// Game view: third-person orbit camera
+const tpController = new ThirdPersonController(gameCamera, canvas);
+tpController.attach();
+
+// Keep orbit target on current object position
+function syncOrbitTargetFromState() {
+  tpController.setTarget(
+    state.transform.position.x,
+    state.transform.position.y,
+    state.transform.position.z
+  );
+}
 
 // ---- transforms ----
 const modelMatrix = mat4.create();
 let angle = 0;
 
+function setCommonUniforms(cam) {
+  // MVP
+  gl.uniformMatrix4fv(program.getUniformLocation("uModel"), false, modelMatrix);
+  gl.uniformMatrix4fv(program.getUniformLocation("uView"), false, cam.viewMatrix);
+  gl.uniformMatrix4fv(program.getUniformLocation("uProjection"), false, cam.projectionMatrix);
+
+  // Camera
+  gl.uniform3fv(program.getUniformLocation("uCameraPos"), cam.position);
+
+  // Material
+  gl.uniform3fv(
+    program.getUniformLocation("uKa"),
+    new Float32Array([state.material.ka.x, state.material.ka.y, state.material.ka.z])
+  );
+  gl.uniform3fv(program.getUniformLocation("uKd"), new Float32Array([1.0, 1.0, 1.0]));
+  gl.uniform3fv(
+    program.getUniformLocation("uKs"),
+    new Float32Array([state.material.ks.x, state.material.ks.y, state.material.ks.z])
+  );
+  gl.uniform1f(program.getUniformLocation("uShininess"), state.material.shininess);
+  gl.uniform1i(program.getUniformLocation("uUseBlinnPhong"), state.useBlinnPhong ? 1 : 0);
+
+  // Directional light
+  gl.uniform3fv(
+    program.getUniformLocation("uDirLight.direction"),
+    new Float32Array([state.dirLight.direction.x, state.dirLight.direction.y, state.dirLight.direction.z])
+  );
+  gl.uniform3fv(program.getUniformLocation("uDirLight.color"), new Float32Array([1.0, 1.0, 1.0]));
+  gl.uniform1f(program.getUniformLocation("uDirLight.intensity"), state.dirLight.intensity);
+
+  // Point light + attenuation
+  gl.uniform3fv(
+    program.getUniformLocation("uPointLight.position"),
+    new Float32Array([state.pointLight.position.x, state.pointLight.position.y, state.pointLight.position.z])
+  );
+  gl.uniform3fv(program.getUniformLocation("uPointLight.color"), new Float32Array([1.0, 0.95, 0.9]));
+  gl.uniform1f(program.getUniformLocation("uPointLight.intensity"), state.pointLight.intensity);
+  gl.uniform1f(program.getUniformLocation("uPointLight.constant"), state.pointLight.constant);
+  gl.uniform1f(program.getUniformLocation("uPointLight.linear"), state.pointLight.linear);
+  gl.uniform1f(program.getUniformLocation("uPointLight.quadratic"), state.pointLight.quadratic);
+
+  // Texture
+  albedoTex.bind(0);
+  gl.uniform1i(program.getUniformLocation("uAlbedoMap"), 0);
+  gl.uniform1i(program.getUniformLocation("uUseTexture"), state.useTexture ? 1 : 0);
+}
+
+function drawScene(cam) {
+  program.use();
+  setCommonUniforms(cam);
+  activeMesh.draw();
+}
+
 function renderLoop() {
   time.update();
-  controller.update(time.deltaTime);
+
+  fpController.update(time.deltaTime);
+  tpController.update(time.deltaTime);
 
   angle += time.deltaTime * 0.6;
 
-  renderer.beginFrame();
+  // Keep orbit target synced to object position
+  syncOrbitTargetFromState();
 
   // Build model matrix from GUI transform
   mat4.identity(modelMatrix);
@@ -177,51 +266,29 @@ function renderLoop() {
     state.transform.scale.z
   ]);
 
-  program.use();
+  // --- Dual viewport rendering (scissor + viewport) ---
+  gl.enable(gl.SCISSOR_TEST);
 
-  // MVP
-  gl.uniformMatrix4fv(program.getUniformLocation("uModel"), false, modelMatrix);
-  gl.uniformMatrix4fv(program.getUniformLocation("uView"), false, camera.viewMatrix);
-  gl.uniformMatrix4fv(program.getUniformLocation("uProjection"), false, camera.projectionMatrix);
+  const W = canvas.width;
+  const H = canvas.height;
+  const halfW = Math.floor(W / 2);
 
-  // Camera
-  gl.uniform3fv(program.getUniformLocation("uCameraPos"), camera.position);
+  // LEFT: Engine View (First Person)
+  gl.viewport(0, 0, halfW, H);
+  gl.scissor(0, 0, halfW, H);
+  gl.clearColor(0.08, 0.08, 0.10, 1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  drawScene(engineCamera);
 
-  // Material
-  gl.uniform3fv(program.getUniformLocation("uKa"),
-    new Float32Array([state.material.ka.x, state.material.ka.y, state.material.ka.z]));
-  gl.uniform3fv(program.getUniformLocation("uKd"),
-    new Float32Array([1.0, 1.0, 1.0])); // used only when texture disabled
-  gl.uniform3fv(program.getUniformLocation("uKs"),
-    new Float32Array([state.material.ks.x, state.material.ks.y, state.material.ks.z]));
-  gl.uniform1f(program.getUniformLocation("uShininess"), state.material.shininess);
-  gl.uniform1i(program.getUniformLocation("uUseBlinnPhong"), state.useBlinnPhong ? 1 : 0);
+  // RIGHT: Game View (Third Person)
+  gl.viewport(halfW, 0, W - halfW, H);
+  gl.scissor(halfW, 0, W - halfW, H);
+  gl.clearColor(0.05, 0.05, 0.06, 1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  drawScene(gameCamera);
 
-  // Directional light
-  gl.uniform3fv(program.getUniformLocation("uDirLight.direction"),
-    new Float32Array([state.dirLight.direction.x, state.dirLight.direction.y, state.dirLight.direction.z]));
-  gl.uniform3fv(program.getUniformLocation("uDirLight.color"),
-    new Float32Array([1.0, 1.0, 1.0]));
-  gl.uniform1f(program.getUniformLocation("uDirLight.intensity"), state.dirLight.intensity);
+  gl.disable(gl.SCISSOR_TEST);
 
-  // Point light + attenuation
-  gl.uniform3fv(program.getUniformLocation("uPointLight.position"),
-    new Float32Array([state.pointLight.position.x, state.pointLight.position.y, state.pointLight.position.z]));
-  gl.uniform3fv(program.getUniformLocation("uPointLight.color"),
-    new Float32Array([1.0, 0.95, 0.9]));
-  gl.uniform1f(program.getUniformLocation("uPointLight.intensity"), state.pointLight.intensity);
-  gl.uniform1f(program.getUniformLocation("uPointLight.constant"), state.pointLight.constant);
-  gl.uniform1f(program.getUniformLocation("uPointLight.linear"), state.pointLight.linear);
-  gl.uniform1f(program.getUniformLocation("uPointLight.quadratic"), state.pointLight.quadratic);
-
-  // Texture
-  albedoTex.bind(0);
-  gl.uniform1i(program.getUniformLocation("uAlbedoMap"), 0);
-  gl.uniform1i(program.getUniformLocation("uUseTexture"), state.useTexture ? 1 : 0);
-
-  activeMesh.draw();
-
-  renderer.endFrame();
   requestAnimationFrame(renderLoop);
 }
 
