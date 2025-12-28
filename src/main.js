@@ -30,7 +30,6 @@ const engineCamera = new Camera(60, 1, 0.1, 100);
 const gameCamera = new Camera(60, 1, 0.1, 100);
 
 function setupInitialCameras() {
-  // Engine view (free roam)
   engineCamera.position[0] = 0;
   engineCamera.position[1] = 1.2;
   engineCamera.position[2] = 3.0;
@@ -39,7 +38,6 @@ function setupInitialCameras() {
   engineCamera.target[2] = 0;
   engineCamera.updateView();
 
-  // Game view (orbit around target)
   gameCamera.position[0] = 2.5;
   gameCamera.position[1] = 2.0;
   gameCamera.position[2] = 4.0;
@@ -62,7 +60,6 @@ function resizeCanvas() {
 
   renderer.resize(canvas.width, canvas.height);
 
-  // Each viewport is half width
   const aspectHalf = (canvas.width * 0.5) / canvas.height;
   engineCamera.resize(aspectHalf);
   gameCamera.resize(aspectHalf);
@@ -75,21 +72,15 @@ const vsSource = await loadText("./src/shaders/phong.vert.glsl");
 const fsSource = await loadText("./src/shaders/phong.frag.glsl");
 const program = new ShaderProgram(gl, vsSource, fsSource);
 
-// -------------------- Texture --------------------
-const albedoTex = await loadTexture(gl, "./assets/textures/pink-textured-background.jpg");
+// -------------------- Texture (runtime swap enabled) --------------------
+let albedoTex = await loadTexture(gl, "./assets/textures/pink-textured-background.jpg");
 
 // -------------------- Meshes (Primitives + OBJ) --------------------
 let meshOBJ;
 try {
   const objData = await loadOBJ("./assets/models/FinalBaseMesh.obj");
   meshOBJ = new Mesh(gl, { ...objData, colors: null });
-  console.log(
-    "OBJ loaded:",
-    objData.positions.length / 3,
-    "verts,",
-    objData.indices.length / 3,
-    "tris"
-  );
+  console.log("OBJ loaded:", objData.positions.length / 3, "verts,", objData.indices.length / 3, "tris");
 } catch (e) {
   console.warn("OBJ load failed, fallback OBJ->cube:", e.message);
   meshOBJ = new Mesh(gl, PrimitiveFactory.createCube());
@@ -110,7 +101,6 @@ function meshByType(type) {
   if (type === "Prism") return meshPrism;
   return meshOBJ;
 }
-
 function defaultScaleByType(type) {
   return type === "OBJ" ? 0.07 : 1.0;
 }
@@ -143,11 +133,15 @@ function getActiveEntity() {
   return entities.find((e) => e.id === activeEntityId) || null;
 }
 
-function addEntityByType(type) {
-  const mesh = meshByType(type);
-  const ent = makeEntity(meshTypeSafe(type), mesh, `${type}_${entities.length + 1}`, defaultScaleByType(type));
+function meshTypeSafe(type) {
+  return MESH_TYPES.includes(type) ? type : "OBJ";
+}
 
-  // küçük bir grid yerleşimi
+function addEntityByType(type) {
+  const safeType = meshTypeSafe(type);
+  const mesh = meshByType(safeType);
+  const ent = makeEntity(safeType, mesh, `${safeType}_${entities.length + 1}`, defaultScaleByType(safeType));
+
   ent.transform.position.x = (entities.length % 5) * 0.8;
   ent.transform.position.z = Math.floor(entities.length / 5) * 0.8;
 
@@ -156,10 +150,6 @@ function addEntityByType(type) {
 
   gui.refreshEntities();
   gui.setActiveEntity(ent);
-}
-
-function meshTypeSafe(type) {
-  return MESH_TYPES.includes(type) ? type : "OBJ";
 }
 
 function removeActiveEntity() {
@@ -188,25 +178,25 @@ function setActiveEntityMeshType(type) {
   ent.meshType = safe;
   ent.mesh = meshByType(safe);
 
-  // 1. implementasyondaki “OBJ ise 0.07, değilse 1” default scale davranışı
   const s = defaultScaleByType(safe);
   ent.transform.scale.x = s;
   ent.transform.scale.y = s;
   ent.transform.scale.z = s;
 
-  gui.setActiveEntity(ent); // transform folder içeriğini güncel tutmak için
+  gui.setActiveEntity(ent);
 }
 
-// -------------------- Global State (1st impl preserved) --------------------
+// -------------------- Global State --------------------
 const state = {
-  // Scene-ish
-  spawnType: "OBJ", // yeni obje ekleme tipi
+  spawnType: "OBJ",
+
   useTexture: true,
   useBlinnPhong: true,
 
-  // 1st impl’deki “kendi kendine dönme” hissi korunuyor:
+  textureName: "pink-textured-background.jpg", // NEW
+
   autoRotateActive: true,
-  rotateSpeed: 0.6, // rad/sec
+  rotateSpeed: 0.6,
 
   dirLight: {
     direction: { x: 0.3, y: -1.0, z: 0.2 },
@@ -228,7 +218,24 @@ const state = {
   }
 };
 
-// -------------------- GUI (merged) --------------------
+// -------------------- Texture upload helper (NEW) --------------------
+async function setAlbedoTextureFromFile(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const newTex = await loadTexture(gl, url);
+
+    // cleanup old texture if supported
+    if (albedoTex && typeof albedoTex.dispose === "function") albedoTex.dispose();
+    if (albedoTex && typeof albedoTex.delete === "function") albedoTex.delete();
+
+    albedoTex = newTex;
+    state.textureName = file.name;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+// -------------------- GUI --------------------
 const gui = new GUIController();
 gui.init({
   state,
@@ -242,7 +249,6 @@ gui.init({
     gui.setActiveEntity(getActiveEntity());
   },
 
-  // multi-object actions
   onAddEntity: (type) => addEntityByType(type),
   onRemoveActive: () => removeActiveEntity(),
   onChangeActiveMeshType: (type) => setActiveEntityMeshType(type),
@@ -256,7 +262,6 @@ gui.init({
       const baseName = file.name.replace(/\.[^/.]+$/, "");
       const ent = makeEntity("OBJ", newMesh, baseName, 1.0);
 
-      // upload edilenleri de biraz yan yana diz
       ent.transform.position.x = (entities.length % 5) * 0.8;
       ent.transform.position.z = Math.floor(entities.length / 5) * 0.8;
 
@@ -269,10 +274,22 @@ gui.init({
       console.error("OBJ upload failed:", e);
       alert("Error loading OBJ file.");
     }
+  },
+
+  // NEW:
+  onUploadTexture: async (file) => {
+    try {
+      await setAlbedoTextureFromFile(file);
+      state.textureName = file.name;   // veya siz nasıl set ediyorsanız
+gui.updateTextureName();
+    } catch (e) {
+      console.error("Texture upload failed:", e);
+      alert("Error loading texture file.");
+    }
   }
 });
 
-// 1st impl davranışını koru: başlangıçta 1 adet OBJ olsun
+// initial object
 addEntityByType("OBJ");
 
 // -------------------- Controllers --------------------
@@ -289,14 +306,11 @@ let autoAngle = 0;
 function setCommonUniforms(cam) {
   program.use();
 
-  // View/Projection
   gl.uniformMatrix4fv(program.getUniformLocation("uView"), false, cam.viewMatrix);
   gl.uniformMatrix4fv(program.getUniformLocation("uProjection"), false, cam.projectionMatrix);
 
-  // Camera
   gl.uniform3fv(program.getUniformLocation("uCameraPos"), cam.position);
 
-  // Material
   gl.uniform3fv(
     program.getUniformLocation("uKa"),
     new Float32Array([state.material.ka.x, state.material.ka.y, state.material.ka.z])
@@ -309,7 +323,6 @@ function setCommonUniforms(cam) {
   gl.uniform1f(program.getUniformLocation("uShininess"), state.material.shininess);
   gl.uniform1i(program.getUniformLocation("uUseBlinnPhong"), state.useBlinnPhong ? 1 : 0);
 
-  // Directional light
   gl.uniform3fv(
     program.getUniformLocation("uDirLight.direction"),
     new Float32Array([state.dirLight.direction.x, state.dirLight.direction.y, state.dirLight.direction.z])
@@ -317,7 +330,6 @@ function setCommonUniforms(cam) {
   gl.uniform3fv(program.getUniformLocation("uDirLight.color"), new Float32Array([1.0, 1.0, 1.0]));
   gl.uniform1f(program.getUniformLocation("uDirLight.intensity"), state.dirLight.intensity);
 
-  // Point light + attenuation (1st impl preserved)
   gl.uniform3fv(
     program.getUniformLocation("uPointLight.position"),
     new Float32Array([state.pointLight.position.x, state.pointLight.position.y, state.pointLight.position.z])
@@ -328,7 +340,7 @@ function setCommonUniforms(cam) {
   gl.uniform1f(program.getUniformLocation("uPointLight.linear"), state.pointLight.linear);
   gl.uniform1f(program.getUniformLocation("uPointLight.quadratic"), state.pointLight.quadratic);
 
-  // Texture
+  // Texture bind (uses latest albedoTex)
   albedoTex.bind(0);
   gl.uniform1i(program.getUniformLocation("uAlbedoMap"), 0);
   gl.uniform1i(program.getUniformLocation("uUseTexture"), state.useTexture ? 1 : 0);
@@ -375,34 +387,25 @@ function renderLoop() {
   fpController.update(time.deltaTime);
   tpController.update(time.deltaTime);
 
-  // 1st impl “angle” hissi (active entity’ye uygulanıyor)
   autoAngle += time.deltaTime * state.rotateSpeed;
 
-  // Orbit target: active entity’nin pozisyonunu takip et (2nd impl preserved)
   const active = getActiveEntity();
   if (active) {
-    tpController.setTarget(
-      active.transform.position.x,
-      active.transform.position.y,
-      active.transform.position.z
-    );
+    tpController.setTarget(active.transform.position.x, active.transform.position.y, active.transform.position.z);
   }
 
-  // --- Dual viewport rendering (scissor + viewport) ---
   gl.enable(gl.SCISSOR_TEST);
 
   const W = canvas.width;
   const H = canvas.height;
   const halfW = Math.floor(W / 2);
 
-  // LEFT: Engine View (First Person)
   gl.viewport(0, 0, halfW, H);
   gl.scissor(0, 0, halfW, H);
   gl.clearColor(0.08, 0.08, 0.10, 1.0);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
   drawEntities(engineCamera);
 
-  // RIGHT: Game View (Third Person)
   gl.viewport(halfW, 0, W - halfW, H);
   gl.scissor(halfW, 0, W - halfW, H);
   gl.clearColor(0.05, 0.05, 0.06, 1.0);

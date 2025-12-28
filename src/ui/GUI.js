@@ -13,6 +13,7 @@ export class GUIController {
     this.onAddEntity = null;
     this.onRemoveActive = null;
     this.onUploadOBJ = null;
+    this.onUploadTexture = null;          // NEW
     this.onChangeActiveMeshType = null;
 
     this._activeEntity = null;
@@ -23,6 +24,7 @@ export class GUIController {
     this._activeFolder = null;       // "Active Object"
     this._transformFolder = null;    // inside active folder
     this._meshFolder = null;         // inside active folder
+    this._textureNameCtrl = null;   // controller for Current Texture display
   }
 
   init({
@@ -34,6 +36,7 @@ export class GUIController {
     onAddEntity,
     onRemoveActive,
     onUploadOBJ,
+    onUploadTexture,                 // NEW
     onChangeActiveMeshType
   }) {
     this.state = state;
@@ -46,6 +49,7 @@ export class GUIController {
     this.onAddEntity = onAddEntity;
     this.onRemoveActive = onRemoveActive;
     this.onUploadOBJ = onUploadOBJ;
+    this.onUploadTexture = onUploadTexture;   // NEW
     this.onChangeActiveMeshType = onChangeActiveMeshType;
 
     const GUI = window.lil?.GUI;
@@ -53,22 +57,30 @@ export class GUIController {
 
     this.gui = new GUI({ title: "Mini Engine" });
 
-    // ---------------- Scene (merged) ----------------
+    // Ensure these exist (so GUI won't crash)
+    if (this.state.spawnType === undefined) this.state.spawnType = "OBJ";
+    if (this.state.textureName === undefined) this.state.textureName = "default";
+
+    // ---------------- Scene ----------------
     const fScene = this.gui.addFolder("Scene");
 
     // Upload OBJ
-    fScene.add({ upload: () => this._triggerFileInput() }, "upload").name("📁 Upload OBJ");
+    fScene.add({ uploadOBJ: () => this._triggerOBJInput() }, "uploadOBJ").name("📁 Upload OBJ");
 
-    // Spawn type selector + add button (keeps 1st impl meshType feel)
-    fScene
-      .add(this.state, "spawnType", this.meshTypes)
-      .name("Spawn Type");
+    // Upload Texture (NEW)
+    fScene.add({ uploadTex: () => this._triggerTextureInput() }, "uploadTex").name("🖼️ Upload Texture");
 
+    // Show current texture name (read-only display)
+    this._textureNameCtrl = fScene.add(this.state, "textureName").name("Current Texture").listen();
+    this._textureNameCtrl.disable();
+
+    // Spawn type selector + add
+    fScene.add(this.state, "spawnType", this.meshTypes).name("Spawn Type");
     fScene
       .add({ add: () => this.onAddEntity && this.onAddEntity(this.state.spawnType) }, "add")
       .name("Add Entity");
 
-    // Quick add buttons (2nd impl)
+    // Quick add buttons
     const quick = fScene.addFolder("Quick Add");
     quick.add({ cube: () => this.onAddEntity && this.onAddEntity("Cube") }, "cube").name("Add Cube");
     quick.add({ sphere: () => this.onAddEntity && this.onAddEntity("Sphere") }, "sphere").name("Add Sphere");
@@ -86,22 +98,22 @@ export class GUIController {
       .name("Active Object")
       .onChange((id) => this.onSelectActive && this.onSelectActive(id));
 
-    // Render toggles (1st impl preserved)
+    // Render toggles
     fScene.add(this.state, "useTexture").name("Use Texture");
     fScene.add(this.state, "useBlinnPhong").name("Use Blinn-Phong");
 
-    // Auto rotate (preserve 1st impl behavior, but for active entity)
+    // Animation
     const fAnim = fScene.addFolder("Animation");
     fAnim.add(this.state, "autoRotateActive").name("Auto-rotate Active");
     fAnim.add(this.state, "rotateSpeed", 0.0, 5.0, 0.01).name("Rotate Speed");
 
     fScene.open();
 
-    // ---------------- Active Object (new, but preserves Transform UI) ----------------
+    // ---------------- Active Object ----------------
     this._activeFolder = this.gui.addFolder("Active Object");
     this._activeFolder.open();
 
-    // ---------------- Lights (1st impl preserved) ----------------
+    // ---------------- Lights ----------------
     const fDir = this.gui.addFolder("Directional Light");
     fDir.add(this.state.dirLight.direction, "x", -1, 1, 0.01).name("dir.x");
     fDir.add(this.state.dirLight.direction, "y", -1, 1, 0.01).name("dir.y");
@@ -113,12 +125,11 @@ export class GUIController {
     fPoint.add(this.state.pointLight.position, "y", -5, 5, 0.01).name("pos.y");
     fPoint.add(this.state.pointLight.position, "z", -5, 5, 0.01).name("pos.z");
     fPoint.add(this.state.pointLight, "intensity", 0, 10, 0.01).name("intensity");
-    // attenuation sliders (1st impl preserved)
     fPoint.add(this.state.pointLight, "constant", 0.1, 2.0, 0.01).name("constant");
     fPoint.add(this.state.pointLight, "linear", 0.0, 1.0, 0.01).name("linear");
     fPoint.add(this.state.pointLight, "quadratic", 0.0, 1.0, 0.01).name("quadratic");
 
-    // ---------------- Material (1st impl preserved: Ka/Ks as x/y/z) ----------------
+    // ---------------- Material ----------------
     const fMat = this.gui.addFolder("Material");
     fMat.add(this.state.material.ka, "x", 0, 1, 0.01).name("Ka.r");
     fMat.add(this.state.material.ka, "y", 0, 1, 0.01).name("Ka.g");
@@ -134,7 +145,7 @@ export class GUIController {
     this.setActiveEntity(this.getActiveEntity ? this.getActiveEntity() : null);
   }
 
-  _triggerFileInput() {
+  _triggerOBJInput() {
     const fileInput = document.createElement("input");
     fileInput.type = "file";
     fileInput.accept = ".obj";
@@ -145,11 +156,21 @@ export class GUIController {
     fileInput.click();
   }
 
+  _triggerTextureInput() {
+    const fileInput = document.createElement("input");
+    fileInput.type = "file";
+    fileInput.accept = "image/*";
+    fileInput.onchange = (e) => {
+      const file = e.target.files?.[0];
+      if (file && this.onUploadTexture) this.onUploadTexture(file);
+    };
+    fileInput.click();
+  }
+
   refreshEntities() {
     if (!this._activeDropdown) return;
 
     const opts = this._buildEntityOptions();
-    // lil-gui supports .options(object)
     this._activeDropdown.options(opts);
 
     const active = this.getActiveEntity ? this.getActiveEntity() : null;
@@ -157,7 +178,6 @@ export class GUIController {
       this._activeProxy.active = active.id;
       this._activeDropdown.setValue(active.id);
     } else {
-      // fallback: pick first available
       const firstId = this._pickDefaultActiveId(opts);
       this._activeProxy.active = firstId;
       this._activeDropdown.setValue(firstId);
@@ -177,7 +197,6 @@ export class GUIController {
   }
 
   _rebuildActiveMeshControls(entity) {
-    // remove old mesh folder safely (NO removeFolder usage)
     if (this._meshFolder) {
       this._meshFolder.destroy();
       this._meshFolder = null;
@@ -190,7 +209,6 @@ export class GUIController {
       return;
     }
 
-    // Proxy because entity.meshType changes live
     const proxy = { meshType: entity.meshType || "OBJ" };
 
     this._meshFolder
@@ -198,7 +216,6 @@ export class GUIController {
       .name("Type")
       .onChange((v) => {
         if (this.onChangeActiveMeshType) this.onChangeActiveMeshType(v);
-        // refresh proxy value from entity after change
         const cur = this.getActiveEntity ? this.getActiveEntity() : null;
         if (cur) proxy.meshType = cur.meshType;
       });
@@ -207,7 +224,6 @@ export class GUIController {
   }
 
   _rebuildTransformFolder(entity) {
-    // remove old transform folder safely
     if (this._transformFolder) {
       this._transformFolder.destroy();
       this._transformFolder = null;
@@ -243,10 +259,7 @@ export class GUIController {
   _buildEntityOptions() {
     const opts = {};
     const list = this.getEntities ? this.getEntities() : [];
-    for (const e of list) {
-      // name -> id mapping (lil-gui expects {label: value})
-      opts[e.name] = e.id;
-    }
+    for (const e of list) opts[e.name] = e.id;
     if (Object.keys(opts).length === 0) opts["<none>"] = "";
     return opts;
   }
@@ -254,5 +267,10 @@ export class GUIController {
   _pickDefaultActiveId(opts) {
     const values = Object.values(opts);
     return values.length ? values[0] : "";
+  }
+
+  // ✅ MUST be inside the class
+  updateTextureName() {
+    if (this._textureNameCtrl) this._textureNameCtrl.updateDisplay();
   }
 }
