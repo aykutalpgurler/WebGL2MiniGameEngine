@@ -55,14 +55,16 @@ export class FirstPersonController {
   }
 
   _handleMouseMove(e) {
-    if (!this.enabled || !this.isPointerLocked) return;
+  if (!this.enabled || !this.isPointerLocked) return;
 
-    this.yaw -= e.movementX * this.lookSpeed;
-    this.pitch -= e.movementY * this.lookSpeed;
+  // FIX: invert mouse directions
+  this.yaw   += e.movementX * this.lookSpeed;   // left-right
+  this.pitch += e.movementY * this.lookSpeed;   // up-down
 
-    this.pitch = Math.max(-this.pitchLimit, Math.min(this.pitchLimit, this.pitch));
-    this._applyAnglesToCamera();
-  }
+  this.pitch = Math.max(-this.pitchLimit, Math.min(this.pitchLimit, this.pitch));
+  this._applyAnglesToCamera();
+}
+
 
   _applyAnglesToCamera() {
     // forward direction from yaw/pitch
