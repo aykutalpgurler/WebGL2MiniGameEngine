@@ -2,77 +2,157 @@
 export class GUIController {
   constructor() {
     this.gui = null;
+    this.state = null;
+    this.getEntities = null;
+    this.getActiveEntity = null;
+
+    this.onSelectActive = null;
+    this.onAddEntity = null;
+    this.onRemoveActive = null;
+    this.onUploadOBJ = null; // Yeni callback
+
+    this._activeEntity = null;
+    this._activeDropdown = null;
+    this._activeProxy = { active: "" };
+    this._transformFolder = null;
   }
 
-  init(params) {
-    // expects window.lil.GUI (from vendor/lil-gui.min.js)
-    const GUI = window.lil?.GUI;
-    if (!GUI) throw new Error("lil-gui not found on window.lil.GUI");
+  init({ state, getEntities, getActiveEntity, onSelectActive, onAddEntity, onRemoveActive, onUploadOBJ }) {
+    this.state = state;
+    this.getEntities = getEntities;
+    this.getActiveEntity = getActiveEntity;
+    this.onSelectActive = onSelectActive;
+    this.onAddEntity = onAddEntity;
+    this.onRemoveActive = onRemoveActive;
+    this.onUploadOBJ = onUploadOBJ;
 
-    const {
-      state,
-      onSelectMeshType,
-      onToggleTexture
-    } = params;
+    const LilGUI = window.lil?.GUI;
+    if (!LilGUI) {
+      console.warn("lil-gui not found on window.lil.GUI");
+      return;
+    }
 
-    this.gui = new GUI({ title: "Mini Engine" });
+    this.gui = new LilGUI({ title: "BBM414 Engine" });
 
-    // ---- Scene / Object ----
-    const fScene = this.gui.addFolder("Scene");
-    fScene.add(state, "meshType", ["OBJ", "Cube", "Sphere", "Cylinder", "Prism"])
-      .name("Mesh")
-      .onChange((v) => onSelectMeshType(v));
+    // --- Scene / Objects ---
+    const sceneFolder = this.gui.addFolder("Scene");
 
-    fScene.add(state, "useTexture").name("Use Texture").onChange((v) => onToggleTexture(v));
-    fScene.add(state, "useBlinnPhong").name("Use Blinn-Phong");
+    // Dynamic OBJ Upload
+    sceneFolder.add({ upload: () => this._triggerFileInput() }, "upload").name("📁 Upload OBJ");
+    
+    sceneFolder.add({ addCube: () => this.onAddEntity("Cube") }, "addCube").name("Add Cube");
+    sceneFolder.add({ addSphere: () => this.onAddEntity("Sphere") }, "addSphere").name("Add Sphere");
+    sceneFolder.add({ addCylinder: () => this.onAddEntity("Cylinder") }, "addCylinder").name("Add Cylinder");
+    sceneFolder.add({ addPrism: () => this.onAddEntity("Prism") }, "addPrism").name("Add Prism");
+    sceneFolder.add({ remove: () => this.onRemoveActive() }, "remove").name("Remove Active");
 
-    // ---- Transform ----
-    const fTr = this.gui.addFolder("Transform");
+    const opts = this._buildEntityOptions();
+    this._activeProxy.active = this._pickDefaultActiveId(opts);
 
-    fTr.add(state.transform.position, "x", -5, 5, 0.01).name("pos.x");
-    fTr.add(state.transform.position, "y", -5, 5, 0.01).name("pos.y");
-    fTr.add(state.transform.position, "z", -5, 5, 0.01).name("pos.z");
+    this._activeDropdown = sceneFolder
+      .add(this._activeProxy, "active", opts)
+      .name("Active Object")
+      .onChange((id) => {
+        if (this.onSelectActive) this.onSelectActive(id);
+      });
 
-    fTr.add(state.transform.rotation, "x", -Math.PI, Math.PI, 0.01).name("rot.x");
-    fTr.add(state.transform.rotation, "y", -Math.PI, Math.PI, 0.01).name("rot.y");
-    fTr.add(state.transform.rotation, "z", -Math.PI, Math.PI, 0.01).name("rot.z");
+    sceneFolder.open();
 
-    fTr.add(state.transform.scale, "x", 0.01, 3, 0.01).name("scale.x");
-    fTr.add(state.transform.scale, "y", 0.01, 3, 0.01).name("scale.y");
-    fTr.add(state.transform.scale, "z", 0.01, 3, 0.01).name("scale.z");
+    // --- Render / Material / Lights (Statik Klasörler) ---
+    this._setupStaticFolders();
 
-    // ---- Lights ----
-    const fDir = this.gui.addFolder("Directional Light");
-    fDir.add(state.dirLight.direction, "x", -1, 1, 0.01).name("dir.x");
-    fDir.add(state.dirLight.direction, "y", -1, 1, 0.01).name("dir.y");
-    fDir.add(state.dirLight.direction, "z", -1, 1, 0.01).name("dir.z");
-    fDir.add(state.dirLight, "intensity", 0, 5, 0.01).name("intensity");
+    // Initial Active Entity
+    this.setActiveEntity(this.getActiveEntity());
+  }
 
-    const fPoint = this.gui.addFolder("Point Light");
-    fPoint.add(state.pointLight.position, "x", -5, 5, 0.01).name("pos.x");
-    fPoint.add(state.pointLight.position, "y", -5, 5, 0.01).name("pos.y");
-    fPoint.add(state.pointLight.position, "z", -5, 5, 0.01).name("pos.z");
-    fPoint.add(state.pointLight, "intensity", 0, 10, 0.01).name("intensity");
-    fPoint.add(state.pointLight, "constant", 0.1, 2.0, 0.01).name("constant");
-    fPoint.add(state.pointLight, "linear", 0.0, 1.0, 0.01).name("linear");
-    fPoint.add(state.pointLight, "quadratic", 0.0, 1.0, 0.01).name("quadratic");
+  _triggerFileInput() {
+    const fileInput = document.createElement("input");
+    fileInput.type = "file";
+    fileInput.accept = ".obj";
+    fileInput.onchange = (e) => {
+      const file = e.target.files[0];
+      if (file && this.onUploadOBJ) {
+        this.onUploadOBJ(file);
+      }
+    };
+    fileInput.click();
+  }
 
-    // ---- Material ----
-    const fMat = this.gui.addFolder("Material");
-    fMat.add(state.material.ka, "x", 0, 1, 0.01).name("Ka.r");
-    fMat.add(state.material.ka, "y", 0, 1, 0.01).name("Ka.g");
-    fMat.add(state.material.ka, "z", 0, 1, 0.01).name("Ka.b");
+  refreshEntities() {
+    if (!this._activeDropdown) return;
+    const opts = this._buildEntityOptions();
+    this._activeDropdown.options(opts);
 
-    fMat.add(state.material.ks, "x", 0, 1, 0.01).name("Ks.r");
-    fMat.add(state.material.ks, "y", 0, 1, 0.01).name("Ks.g");
-    fMat.add(state.material.ks, "z", 0, 1, 0.01).name("Ks.b");
+    const active = this.getActiveEntity ? this.getActiveEntity() : null;
+    if (active) {
+      this._activeDropdown.setValue(active.id);
+    }
+  }
 
-    fMat.add(state.material, "shininess", 1, 256, 1).name("shininess");
+  setActiveEntity(entity) {
+    this._activeEntity = entity;
+    this._rebuildTransformFolder(entity);
+    if (this._activeDropdown && entity) {
+      this._activeDropdown.setValue(entity.id);
+    }
+  }
 
-    fScene.open();
-    fTr.open();
-    fDir.open();
-    fPoint.open();
-    fMat.open();
+  _rebuildTransformFolder(entity) {
+    if (!this.gui) return;
+
+    // FIX: lil-gui uses .destroy() instead of removeFolder()
+    if (this._transformFolder) {
+      this._transformFolder.destroy();
+      this._transformFolder = null;
+    }
+
+    this._transformFolder = this.gui.addFolder("Active Object Transform");
+
+    if (!entity) {
+      this._transformFolder.add({ info: "No active object" }, "info").name("Info");
+      return;
+    }
+
+    const t = entity.transform;
+    const pos = this._transformFolder.addFolder("Position");
+    pos.add(t.position, "x", -20, 20).name("X");
+    pos.add(t.position, "y", -20, 20).name("Y");
+    pos.add(t.position, "z", -20, 20).name("Z");
+    
+    const rot = this._transformFolder.addFolder("Rotation (rad)");
+    rot.add(t.rotation, "x", -Math.PI, Math.PI).name("X");
+    rot.add(t.rotation, "y", -Math.PI, Math.PI).name("Y");
+    rot.add(t.rotation, "z", -Math.PI, Math.PI).name("Z");
+
+    const sca = this._transformFolder.addFolder("Scale");
+    sca.add(t.scale, "x", 0.01, 10).name("X");
+    sca.add(t.scale, "y", 0.01, 10).name("Y");
+    sca.add(t.scale, "z", 0.01, 10).name("Z");
+
+    this._transformFolder.open();
+  }
+
+  _setupStaticFolders() {
+    const renderFolder = this.gui.addFolder("Render Settings");
+    renderFolder.add(this.state, "useTexture").name("Use Texture");
+    renderFolder.add(this.state, "useBlinnPhong").name("Blinn-Phong");
+
+    const matFolder = this.gui.addFolder("Material Properties");
+    matFolder.add(this.state.material, "shininess", 1, 256).name("Shininess");
+    matFolder.addColor(this.state.material, "ka").name("Ambient (Ka)");
+    matFolder.addColor(this.state.material, "ks").name("Specular (Ks)");
+  }
+
+  _buildEntityOptions() {
+    const opts = {};
+    const list = this.getEntities ? this.getEntities() : [];
+    for (const e of list) opts[e.name] = e.id;
+    if (Object.keys(opts).length === 0) opts["<none>"] = "";
+    return opts;
+  }
+
+  _pickDefaultActiveId(opts) {
+    const ids = Object.values(opts);
+    return ids.length ? ids[0] : "";
   }
 }

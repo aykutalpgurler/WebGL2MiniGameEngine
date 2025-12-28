@@ -25,7 +25,7 @@ const renderer = new Renderer(gl);
 const time = new Time();
 const mat4 = window.mat4;
 
-// --- Two cameras for bonus dual viewport ---
+// -------------------- Cameras (Dual Viewport Bonus) --------------------
 const engineCamera = new Camera(60, 1, 0.1, 100);
 const gameCamera = new Camera(60, 1, 0.1, 100);
 
@@ -39,7 +39,7 @@ function setupInitialCameras() {
   engineCamera.target[2] = 0;
   engineCamera.updateView();
 
-  // Game view (orbit around target)
+  // Game view (orbit)
   gameCamera.position[0] = 2.5;
   gameCamera.position[1] = 2.0;
   gameCamera.position[2] = 4.0;
@@ -72,22 +72,22 @@ function resizeCanvas() {
 window.addEventListener("resize", resizeCanvas);
 resizeCanvas();
 
-// ---- shaders ----
+// -------------------- Shaders --------------------
 const vsSource = await loadText("./src/shaders/phong.vert.glsl");
 const fsSource = await loadText("./src/shaders/phong.frag.glsl");
 const program = new ShaderProgram(gl, vsSource, fsSource);
 
-// ---- texture ----
+// -------------------- Texture --------------------
 const albedoTex = await loadTexture(gl, "./assets/textures/pink-textured-background.jpg");
 
-// ---- mesh: OBJ + primitives ----
+// -------------------- Meshes (Primitives + OBJ) --------------------
 let meshOBJ;
 try {
   const objData = await loadOBJ("./assets/models/FinalBaseMesh.obj");
   meshOBJ = new Mesh(gl, { ...objData, colors: null });
   console.log("OBJ loaded:", objData.positions.length / 3, "verts,", objData.indices.length / 3, "tris");
 } catch (e) {
-  console.warn("OBJ load failed, fallback OBJ->cube:", e.message);
+  console.warn("OBJ load failed, fallback to cube:", e.message);
   meshOBJ = new Mesh(gl, PrimitiveFactory.createCube());
 }
 
@@ -96,16 +96,76 @@ const meshSphere = new Mesh(gl, PrimitiveFactory.createSphere({ latBands: 24, lo
 const meshCylinder = new Mesh(gl, PrimitiveFactory.createCylinder({ radialSegments: 32 }));
 const meshPrism = new Mesh(gl, PrimitiveFactory.createPrism());
 
+// -------------------- Multi-object Scene --------------------
+const entities = [];
+let activeEntityId = null;
+
+function makeId() {
+  if (crypto && crypto.randomUUID) return crypto.randomUUID();
+  return String(Date.now() + Math.random());
+}
+
+function makeEntity(mesh, name, defaultScale = 1.0) {
+  const id = makeId();
+  return {
+    id,
+    name,
+    mesh,
+    transform: {
+      position: { x: 0, y: 0, z: 0 },
+      rotation: { x: 0, y: 0, z: 0 },
+      scale: { x: defaultScale, y: defaultScale, z: defaultScale }
+    }
+  };
+}
+
+function getActiveEntity() {
+  return entities.find(e => e.id === activeEntityId) || null;
+}
+
+function meshByType(type) {
+  if (type === "OBJ") return meshOBJ;
+  if (type === "Cube") return meshCube;
+  if (type === "Sphere") return meshSphere;
+  if (type === "Cylinder") return meshCylinder;
+  if (type === "Prism") return meshPrism;
+  return meshOBJ;
+}
+
+function defaultScaleByType(type) {
+  return type === "OBJ" ? 0.07 : 1.0;
+}
+
+function addEntityByType(type) {
+  const mesh = meshByType(type);
+  const ent = makeEntity(mesh, `${type}_${entities.length + 1}`, defaultScaleByType(type));
+
+  // spawn offset so objects don't overlap
+  ent.transform.position.x = (entities.length % 5) * 0.8;
+  ent.transform.position.z = Math.floor(entities.length / 5) * 0.8;
+
+  entities.push(ent);
+  activeEntityId = ent.id;
+
+  gui.refreshEntities();
+  gui.setActiveEntity(ent);
+}
+
+function removeActiveEntity() {
+  const idx = entities.findIndex(e => e.id === activeEntityId);
+  if (idx === -1) return;
+
+  entities.splice(idx, 1);
+  activeEntityId = entities.length ? entities[entities.length - 1].id : null;
+
+  gui.refreshEntities();
+  gui.setActiveEntity(getActiveEntity());
+}
+
+// -------------------- Global State (Lights / Material / Texture) --------------------
 const state = {
-  meshType: "OBJ",
   useTexture: true,
   useBlinnPhong: true,
-
-  transform: {
-    position: { x: 0, y: 0, z: 0 },
-    rotation: { x: 0, y: 0, z: 0 },
-    scale: { x: 0.07, y: 0.07, z: 0.07 }
-  },
 
   dirLight: {
     direction: { x: 0.3, y: -1.0, z: 0.2 },
@@ -127,69 +187,40 @@ const state = {
   }
 };
 
-function pickMesh(type) {
-  if (type === "OBJ") return meshOBJ;
-  if (type === "Cube") return meshCube;
-  if (type === "Sphere") return meshSphere;
-  if (type === "Cylinder") return meshCylinder;
-  if (type === "Prism") return meshPrism;
-  return meshOBJ;
-}
-
-let activeMesh = pickMesh(state.meshType);
-
-// ---- GUI ----
+// -------------------- GUI --------------------
 const gui = new GUIController();
 gui.init({
   state,
-  onSelectMeshType: (v) => {
-    activeMesh = pickMesh(v);
-
-    // defaults per mesh
-    if (v !== "OBJ") {
-      state.transform.scale.x = 1;
-      state.transform.scale.y = 1;
-      state.transform.scale.z = 1;
-    } else {
-      state.transform.scale.x = 0.07;
-      state.transform.scale.y = 0.07;
-      state.transform.scale.z = 0.07;
-    }
+  getEntities: () => entities,
+  getActiveEntity: () => getActiveEntity(),
+  onSelectActive: (id) => {
+    activeEntityId = id;
+    gui.setActiveEntity(getActiveEntity());
   },
-  onToggleTexture: (v) => {
-    state.useTexture = v;
-  }
+  onAddEntity: (type) => addEntityByType(type),
+  onRemoveActive: () => removeActiveEntity()
 });
 
-// ---- Controllers ----
-// Engine view: first-person free roam
+// add one default object to scene
+addEntityByType("OBJ");
+
+// -------------------- Controllers --------------------
+// Left viewport: free roam
 const fpController = new FirstPersonController(engineCamera, canvas);
 fpController.attach();
 
-// Game view: third-person orbit camera
+// Right viewport: orbit camera (input only on right half inside controller)
 const tpController = new ThirdPersonController(gameCamera, canvas);
 tpController.attach();
 
-// Keep orbit target on current object position
-function syncOrbitTargetFromState() {
-  tpController.setTarget(
-    state.transform.position.x,
-    state.transform.position.y,
-    state.transform.position.z
-  );
-}
-
-// ---- transforms ----
+// -------------------- Uniform helpers --------------------
 const modelMatrix = mat4.create();
-let angle = 0;
 
 function setCommonUniforms(cam) {
-  // MVP
-  gl.uniformMatrix4fv(program.getUniformLocation("uModel"), false, modelMatrix);
+  program.use();
+
   gl.uniformMatrix4fv(program.getUniformLocation("uView"), false, cam.viewMatrix);
   gl.uniformMatrix4fv(program.getUniformLocation("uProjection"), false, cam.projectionMatrix);
-
-  // Camera
   gl.uniform3fv(program.getUniformLocation("uCameraPos"), cam.position);
 
   // Material
@@ -230,62 +261,66 @@ function setCommonUniforms(cam) {
   gl.uniform1i(program.getUniformLocation("uUseTexture"), state.useTexture ? 1 : 0);
 }
 
-function drawScene(cam) {
-  program.use();
+function drawEntities(cam) {
   setCommonUniforms(cam);
-  activeMesh.draw();
+
+  for (const ent of entities) {
+    mat4.identity(modelMatrix);
+
+    mat4.translate(modelMatrix, modelMatrix, [
+      ent.transform.position.x,
+      ent.transform.position.y,
+      ent.transform.position.z
+    ]);
+
+    mat4.rotateX(modelMatrix, modelMatrix, ent.transform.rotation.x);
+    mat4.rotateY(modelMatrix, modelMatrix, ent.transform.rotation.y);
+    mat4.rotateZ(modelMatrix, modelMatrix, ent.transform.rotation.z);
+
+    mat4.scale(modelMatrix, modelMatrix, [
+      ent.transform.scale.x,
+      ent.transform.scale.y,
+      ent.transform.scale.z
+    ]);
+
+    gl.uniformMatrix4fv(program.getUniformLocation("uModel"), false, modelMatrix);
+
+    ent.mesh.draw();
+  }
 }
 
+// -------------------- Render loop (Dual Viewport) --------------------
 function renderLoop() {
   time.update();
 
   fpController.update(time.deltaTime);
   tpController.update(time.deltaTime);
 
-  angle += time.deltaTime * 0.6;
+  // Orbit target: follow active entity (so right view is meaningful)
+  const active = getActiveEntity();
+  if (active) {
+    tpController.setTarget(active.transform.position.x, active.transform.position.y, active.transform.position.z);
+  }
 
-  // Keep orbit target synced to object position
-  // syncOrbitTargetFromState();
-
-  // Build model matrix from GUI transform
-  mat4.identity(modelMatrix);
-
-  mat4.translate(modelMatrix, modelMatrix, [
-    state.transform.position.x,
-    state.transform.position.y,
-    state.transform.position.z
-  ]);
-
-  mat4.rotateX(modelMatrix, modelMatrix, state.transform.rotation.x);
-  mat4.rotateY(modelMatrix, modelMatrix, state.transform.rotation.y + angle);
-  mat4.rotateZ(modelMatrix, modelMatrix, state.transform.rotation.z);
-
-  mat4.scale(modelMatrix, modelMatrix, [
-    state.transform.scale.x,
-    state.transform.scale.y,
-    state.transform.scale.z
-  ]);
-
-  // --- Dual viewport rendering (scissor + viewport) ---
   gl.enable(gl.SCISSOR_TEST);
 
   const W = canvas.width;
   const H = canvas.height;
   const halfW = Math.floor(W / 2);
 
-  // LEFT: Engine View (First Person)
+  // LEFT: Engine View
   gl.viewport(0, 0, halfW, H);
   gl.scissor(0, 0, halfW, H);
   gl.clearColor(0.08, 0.08, 0.10, 1.0);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-  drawScene(engineCamera);
+  drawEntities(engineCamera);
 
-  // RIGHT: Game View (Third Person)
+  // RIGHT: Game View
   gl.viewport(halfW, 0, W - halfW, H);
   gl.scissor(halfW, 0, W - halfW, H);
   gl.clearColor(0.05, 0.05, 0.06, 1.0);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-  drawScene(gameCamera);
+  drawEntities(gameCamera);
 
   gl.disable(gl.SCISSOR_TEST);
 
