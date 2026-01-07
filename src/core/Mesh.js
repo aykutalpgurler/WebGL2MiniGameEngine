@@ -3,6 +3,8 @@ export class Mesh {
     this.gl = gl;
     this.vao = gl.createVertexArray();
     this.indexCount = indices.length;
+    this.indexType = gl.UNSIGNED_SHORT;
+    this._useUint32 = false;
 
     gl.bindVertexArray(this.vao);
 
@@ -18,10 +20,23 @@ export class Mesh {
     // color (location=3) optional debug
     if (colors) this._bindVBO(3, 3, colors);
 
-    // index buffer
+    // index buffer (auto-select 16-bit vs 32-bit)
     const ebo = gl.createBuffer();
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
-    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(indices), gl.STATIC_DRAW);
+    let maxIndex = 0;
+    for (let i = 0; i < indices.length; i++) {
+      const idx = indices[i];
+      if (idx > maxIndex) maxIndex = idx;
+    }
+    if (maxIndex > 65535) {
+      this.indexType = gl.UNSIGNED_INT;
+      this._useUint32 = true;
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint32Array(indices), gl.STATIC_DRAW);
+    } else {
+      this.indexType = gl.UNSIGNED_SHORT;
+      this._useUint32 = false;
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(indices), gl.STATIC_DRAW);
+    }
 
     gl.bindVertexArray(null);
     gl.bindBuffer(gl.ARRAY_BUFFER, null);
@@ -39,7 +54,7 @@ export class Mesh {
   draw() {
     const gl = this.gl;
     gl.bindVertexArray(this.vao);
-    gl.drawElements(gl.TRIANGLES, this.indexCount, gl.UNSIGNED_SHORT, 0);
+    gl.drawElements(gl.TRIANGLES, this.indexCount, this.indexType, 0);
     gl.bindVertexArray(null);
   }
 }
